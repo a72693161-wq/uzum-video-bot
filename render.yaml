@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: uzum-video-bot
+    runtime: docker
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: ALLOWED_USER_ID
+        sync: false
