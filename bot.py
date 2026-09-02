@@ -119,7 +119,7 @@ def process_job(key):
                 video_k = max(80, int((2_750_000 * 8 / duration) / 1000) - audio_k - 12)
                 filters = watermark_filter(job["watermark"])
                 log = str(temp / "passlog")
-                common = ["-y", "-hide_banner", "-loglevel", "error", "-ss", str(start), "-t", str(duration), "-i", str(source)]
+                common = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", str(start), "-t", str(duration), "-i", str(source)]
                 p1 = common + filters + ["-c:v", "libx264", "-preset", "veryfast", "-b:v", f"{video_k}k", "-pass", "1", "-passlogfile", log, "-an", "-f", "null", "/dev/null"]
                 subprocess.run(p1, check=True, timeout=280)
                 audio = ["-an"] if job["mute"] else ["-map", "0:a:0?", "-c:a", "aac", "-b:a", "48k"]
