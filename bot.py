@@ -39,6 +39,17 @@ def send(chat_id, text, reply_markup=None):
     return tg("sendMessage", data)
 
 
+def main_keyboard():
+    return {
+        "keyboard": [
+            [{"text": "🎬 Video tayyorlash"}, {"text": "✂️ Qirqish"}],
+            [{"text": "ℹ️ Imkoniyatlar"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
+
+
 def parse_trim(caption):
     if not caption:
         return 0.0, None
@@ -156,8 +167,34 @@ def handle_update(update):
         if ALLOWED_USER_ID and user_id != ALLOWED_USER_ID:
             send(chat_id, "Bu bot shaxsiy foydalanish uchun.")
             return
-        if message.get("text", "").startswith("/start"):
-            send(chat_id, "Videoni yuboring. Qirqish kerak bo‘lsa izohga 00:05-00:20 deb yozing.")
+        text = message.get("text", "")
+        if text.startswith("/start") or text == "🏠 Bosh menyu":
+            send(
+                chat_id,
+                "Kerakli bo‘limni tugmalardan tanlang 👇",
+                main_keyboard(),
+            )
+            return
+        if text == "🎬 Video tayyorlash":
+            send(
+                chat_id,
+                "📤 MP4 videoni yuboring. Keyin ovoz va suv belgisi sozlamalarini tugmalardan tanlaysiz.",
+                main_keyboard(),
+            )
+            return
+        if text == "✂️ Qirqish":
+            send(
+                chat_id,
+                "Videoni yuborayotganda izohiga vaqtni yozing. Masalan: 00:05-00:20",
+                main_keyboard(),
+            )
+            return
+        if text == "ℹ️ Imkoniyatlar":
+            send(
+                chat_id,
+                "✅ 1080×1440 px\n✅ 3 MB gacha siqish\n✅ Videoni qirqish\n✅ Ovozsiz qilish\n✅ Suv belgisini xiralashtirish",
+                main_keyboard(),
+            )
             return
         media = message.get("video") or message.get("document")
         if not media:
@@ -203,6 +240,7 @@ def setup():
         return "BOT_TOKEN kiritilmagan", 500
     url = os.environ.get("RENDER_EXTERNAL_URL", request.url_root.rstrip("/"))
     result = tg("setWebhook", {"url": f"{url}/webhook/{SECRET}"})
+    tg("setMyCommands", {"commands": '[{"command":"start","description":"Bosh menyuni ochish"}]'})
     return jsonify(ok=bool(result), webhook=f"{url}/webhook/***")
 
 
