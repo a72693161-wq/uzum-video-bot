@@ -4,5 +4,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -r
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY bot.py .
-CMD gunicorn --bind 0.0.0.0:${PORT:-10000} --workers 1 --threads 4 --timeout 600 bot:app
+COPY bot.py oracle_polling.py ./
+CMD if [ "$BOT_MODE" = "polling" ]; then python oracle_polling.py; else gunicorn --bind 0.0.0.0:${PORT:-10000} --workers 1 --threads 4 --timeout 600 bot:app; fi
