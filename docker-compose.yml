@@ -1,0 +1,10 @@
+services:
+  uzum-video-bot:
+    build: .
+    container_name: uzum-video-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      BOT_MODE: polling
+      HIGH_QUALITY: "1"
