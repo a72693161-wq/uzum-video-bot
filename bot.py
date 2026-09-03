@@ -158,9 +158,12 @@ def process_job(key):
                 audio_k = 0 if job["mute"] else 24
                 video_k = max(80, int((2_940_000 * 8 / duration) / 1000) - audio_k - 5)
 
-                # Render free serverida 2-pass juda sekin ishlaydi. Bir martalik ABR
-                # kodlash va uzun videoda pastroq FPS vaqt tugashining oldini oladi.
-                target_fps = 12 if duration > 60 else (15 if duration > 30 else 24)
+                high_quality = os.environ.get("HIGH_QUALITY", "0") == "1"
+                target_fps = (
+                    (20 if duration > 60 else (24 if duration > 30 else 30))
+                    if high_quality
+                    else (12 if duration > 60 else (15 if duration > 30 else 24))
+                )
                 watermark = job["watermark"]
                 if watermark == "auto":
                     watermark = detect_watermark_position(source, duration)
@@ -169,15 +172,32 @@ def process_job(key):
 
                 common = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", str(start), "-t", str(duration), "-i", str(source)]
                 audio = ["-an"] if job["mute"] else ["-map", "0:a:0?", "-c:a", "aac", "-b:a", "24k"]
-                encode = common + filters + audio + [
-                    "-c:v", "libx264", "-preset", "veryfast", "-tune", "film",
-                    "-b:v", f"{video_k}k", "-maxrate", f"{video_k}k",
-                    "-bufsize", f"{max(video_k * 2, 160)}k",
-                    "-profile:v", "high", "-pix_fmt", "yuv420p",
+                quality = [
+                    "-c:v", "libx264", "-tune", "film",
+                    "-b:v", f"{video_k}k", "-profile:v", "high", "-pix_fmt", "yuv420p",
+                ]
+                tail = [
                     "-metadata:s:v:0", "rotate=0", "-aspect", "3:4",
                     "-movflags", "+faststart", str(output),
                 ]
-                subprocess.run(encode, check=True, timeout=900)
+
+                if high_quality:
+                    log = str(temp / "passlog")
+                    first_pass = common + filters + quality + [
+                        "-preset", "fast", "-pass", "1", "-passlogfile", log,
+                        "-an", "-f", "null", "/dev/null",
+                    ]
+                    subprocess.run(first_pass, check=True, timeout=1800)
+                    second_pass = common + filters + audio + quality + [
+                        "-preset", "slow", "-pass", "2", "-passlogfile", log,
+                    ] + tail
+                    subprocess.run(second_pass, check=True, timeout=1800)
+                else:
+                    encode = common + filters + audio + quality + [
+                        "-preset", "veryfast", "-maxrate", f"{video_k}k",
+                        "-bufsize", f"{max(video_k * 2, 160)}k",
+                    ] + tail
+                    subprocess.run(encode, check=True, timeout=900)
 
                 dimensions = subprocess.check_output([
                     "ffprobe", "-v", "error", "-select_streams", "v:0",
