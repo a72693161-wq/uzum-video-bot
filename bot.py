@@ -67,7 +67,7 @@ def parse_trim(caption):
 
 
 def watermark_filter(position):
-    base = "scale=1080:1440:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=1080:1440:(ow-iw)/2:(oh-ih)/2:color=white,setsar=1,fps=30"
+    base = "scale=1080:1440:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos,pad=1080:1440:(ow-iw)/2:(oh-ih)/2:color=white,setsar=1,fps=30,unsharp=5:5:0.25:3:3:0"
     if position == "none":
         return ["-vf", base, "-map", "0:v:0"]
 
@@ -155,12 +155,12 @@ def process_job(key):
                 if duration <= 0:
                     raise RuntimeError("Qirqish vaqti noto‘g‘ri.")
 
-                audio_k = 0 if job["mute"] else 32
-                video_k = max(80, int((2_850_000 * 8 / duration) / 1000) - audio_k - 8)
+                audio_k = 0 if job["mute"] else 24
+                video_k = max(80, int((2_940_000 * 8 / duration) / 1000) - audio_k - 5)
 
                 # Render free serverida 2-pass juda sekin ishlaydi. Bir martalik ABR
                 # kodlash va uzun videoda pastroq FPS vaqt tugashining oldini oladi.
-                target_fps = 15 if duration > 60 else (20 if duration > 30 else 24)
+                target_fps = 12 if duration > 60 else (15 if duration > 30 else 24)
                 watermark = job["watermark"]
                 if watermark == "auto":
                     watermark = detect_watermark_position(source, duration)
@@ -168,9 +168,9 @@ def process_job(key):
                 filters[1] = re.sub(r"fps=30", f"fps={target_fps}", filters[1])
 
                 common = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", str(start), "-t", str(duration), "-i", str(source)]
-                audio = ["-an"] if job["mute"] else ["-map", "0:a:0?", "-c:a", "aac", "-b:a", "32k"]
+                audio = ["-an"] if job["mute"] else ["-map", "0:a:0?", "-c:a", "aac", "-b:a", "24k"]
                 encode = common + filters + audio + [
-                    "-c:v", "libx264", "-preset", "ultrafast",
+                    "-c:v", "libx264", "-preset", "veryfast", "-tune", "film",
                     "-b:v", f"{video_k}k", "-maxrate", f"{video_k}k",
                     "-bufsize", f"{max(video_k * 2, 160)}k",
                     "-profile:v", "high", "-pix_fmt", "yuv420p",
