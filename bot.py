@@ -19,6 +19,7 @@ ALLOWED_USER_ID = os.environ.get("ALLOWED_USER_ID", "").strip()
 
 app = Flask(__name__)
 pending = {}
+batch_users = {}
 jobs_lock = threading.Lock()
 
 
@@ -42,8 +43,8 @@ def send(chat_id, text, reply_markup=None):
 def main_keyboard():
     return {
         "keyboard": [
-            [{"text": "🎬 Video tayyorlash"}, {"text": "✂️ Qirqish"}],
-            [{"text": "ℹ️ Imkoniyatlar"}],
+            [{"text": "🎬 Video tayyorlash"}, {"text": "📦 15 ta video"}],
+            [{"text": "✂️ Qirqish"}, {"text": "ℹ️ Imkoniyatlar"}],
         ],
         "resize_keyboard": True,
         "is_persistent": True,
@@ -84,6 +85,45 @@ def watermark_filter(position):
     return ["-filter_complex", graph, "-map", "[outv]"]
 
 
+def detect_watermark_position(source, duration):
+    """Uchta kadrdagi doimiy, mayda-kontrastli belgi joyini topadi."""
+    width, height = 270, 360
+    frames = []
+    for ratio in (0.15, 0.50, 0.85):
+        at = max(0, duration * ratio)
+        frame = subprocess.check_output([
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", str(at),
+            "-i", str(source), "-vf", f"scale={width}:{height},format=gray",
+            "-frames:v", "1", "-f", "rawvideo", "pipe:1",
+        ], timeout=45)
+        if len(frame) == width * height:
+            frames.append(frame)
+    if len(frames) < 2:
+        return "none"
+
+    rw, rh, margin = 130, 65, 9
+    xs = {"l": margin, "c": (width - rw) // 2, "r": width - rw - margin}
+    ys = {"t": margin, "m": (height - rh) // 2, "b": height - rh - margin}
+
+    best_position, best_score = "none", 0.0
+    for position in ("tl", "tc", "tr", "ml", "mc", "mr", "bl", "bc", "br"):
+        x, y = xs[position[1]], ys[position[0]]
+        edge_total = diff_total = samples = 0
+        for yy in range(y, y + rh):
+            row = yy * width
+            for xx in range(x, x + rw - 1):
+                i = row + xx
+                edge_total += sum(abs(frame[i + 1] - frame[i]) for frame in frames)
+                diff_total += sum(abs(frames[n][i] - frames[0][i]) for n in range(1, len(frames)))
+                samples += len(frames)
+        edge = edge_total / max(samples, 1)
+        motion = diff_total / max((len(frames) - 1) * rw * rh, 1)
+        score = edge - motion * 0.85
+        if edge > 11 and motion < 24 and score > best_score:
+            best_position, best_score = position, score
+    return best_position
+
+
 def process_job(key):
     job = pending.get(key)
     if not job:
@@ -121,7 +161,10 @@ def process_job(key):
                 # Render free serverida 2-pass juda sekin ishlaydi. Bir martalik ABR
                 # kodlash va uzun videoda pastroq FPS vaqt tugashining oldini oladi.
                 target_fps = 15 if duration > 60 else (20 if duration > 30 else 24)
-                filters = watermark_filter(job["watermark"])
+                watermark = job["watermark"]
+                if watermark == "auto":
+                    watermark = detect_watermark_position(source, duration)
+                filters = watermark_filter(watermark)
                 filters[1] = re.sub(r"fps=30", f"fps={target_fps}", filters[1])
 
                 common = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", str(start), "-t", str(duration), "-i", str(source)]
@@ -160,8 +203,16 @@ def audio_keyboard(key):
     ]]}
 
 
+def batch_audio_keyboard(chat_id):
+    return {"inline_keyboard": [[
+        {"text": "🔊 Hammasi ovozli", "callback_data": f"b:{chat_id}:0"},
+        {"text": "🔇 Hammasi ovozsiz", "callback_data": f"b:{chat_id}:1"},
+    ]]}
+
+
 def position_keyboard(key):
     return {"inline_keyboard": [
+        [{"text": "🤖 Avtomatik aniqlash", "callback_data": f"w:{key}:auto"}],
         [{"text": "↖️", "callback_data": f"w:{key}:tl"}, {"text": "⬆️", "callback_data": f"w:{key}:tc"}, {"text": "↗️", "callback_data": f"w:{key}:tr"}],
         [{"text": "⬅️", "callback_data": f"w:{key}:ml"}, {"text": "⏺ Markaz", "callback_data": f"w:{key}:mc"}, {"text": "➡️", "callback_data": f"w:{key}:mr"}],
         [{"text": "↙️", "callback_data": f"w:{key}:bl"}, {"text": "⬇️", "callback_data": f"w:{key}:bc"}, {"text": "↘️", "callback_data": f"w:{key}:br"}],
@@ -186,10 +237,18 @@ def handle_update(update):
             )
             return
         if text == "🎬 Video tayyorlash":
+            batch_users.pop(chat_id, None)
             send(
                 chat_id,
                 "📤 MP4 videoni yuboring. Keyin ovoz va suv belgisi sozlamalarini tugmalardan tanlaysiz.",
                 main_keyboard(),
+            )
+            return
+        if text == "📦 15 ta video":
+            send(
+                chat_id,
+                "15 tagacha video uchun ovoz rejimini bir marta tanlang:",
+                batch_audio_keyboard(chat_id),
             )
             return
         if text == "✂️ Qirqish":
@@ -202,7 +261,7 @@ def handle_update(update):
         if text == "ℹ️ Imkoniyatlar":
             send(
                 chat_id,
-                "✅ 1080×1440 px\n✅ 3 MB gacha siqish\n✅ Videoni qirqish\n✅ Ovozsiz qilish\n✅ Suv belgisini xiralashtirish",
+                "✅ 1080×1440 px\n✅ 3 MB gacha siqish\n✅ 15 ta videoni navbatga olish\n✅ Videoni qirqish\n✅ Ovozsiz qilish\n✅ Suv belgisini avtomatik xiralashtirish",
                 main_keyboard(),
             )
             return
@@ -212,17 +271,34 @@ def handle_update(update):
             return
         key = uuid.uuid4().hex[:10]
         start, end = parse_trim(message.get("caption", ""))
-        pending[key] = {"chat_id": chat_id, "file_id": media["file_id"], "start": start, "end": end, "mute": False, "watermark": "none"}
-        send(chat_id, "Ovoz rejimini tanlang:", audio_keyboard(key))
+        batch = batch_users.get(chat_id)
+        if batch:
+            if batch["count"] >= 15:
+                send(chat_id, "15 ta video qabul qilindi. Yangi guruh uchun 📦 15 ta video tugmasini qayta bosing.")
+                return
+            batch["count"] += 1
+            pending[key] = {"chat_id": chat_id, "file_id": media["file_id"], "start": start, "end": end, "mute": batch["mute"], "watermark": "auto"}
+            send(chat_id, f"✅ {batch['count']}/15 video navbatga qo‘shildi.")
+            threading.Thread(target=process_job, args=(key,), daemon=True).start()
+        else:
+            pending[key] = {"chat_id": chat_id, "file_id": media["file_id"], "start": start, "end": end, "mute": False, "watermark": "none"}
+            send(chat_id, "Ovoz rejimini tanlang:", audio_keyboard(key))
         return
 
     callback = update.get("callback_query")
     if callback:
         tg("answerCallbackQuery", {"callback_query_id": callback["id"]})
         parts = callback.get("data", "").split(":")
-        if len(parts) != 3 or parts[1] not in pending:
+        if len(parts) != 3:
             return
         kind, key, value = parts
+        if kind == "b":
+            chat_id = callback["message"]["chat"]["id"]
+            batch_users[chat_id] = {"mute": value == "1", "count": 0}
+            send(chat_id, "📤 Endi 15 tagacha videoni ketma-ket yuboring. Bot ularni navbat bilan tayyorlaydi.", main_keyboard())
+            return
+        if key not in pending:
+            return
         chat_id = pending[key]["chat_id"]
         if kind == "a":
             pending[key]["mute"] = value == "1"
