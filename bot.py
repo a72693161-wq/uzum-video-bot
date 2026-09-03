@@ -115,16 +115,26 @@ def process_job(key):
                 if duration <= 0:
                     raise RuntimeError("Qirqish vaqti noto‘g‘ri.")
 
-                audio_k = 0 if job["mute"] else 48
-                video_k = max(80, int((2_750_000 * 8 / duration) / 1000) - audio_k - 12)
+                audio_k = 0 if job["mute"] else 32
+                video_k = max(80, int((2_850_000 * 8 / duration) / 1000) - audio_k - 8)
+
+                # Render free serverida 2-pass juda sekin ishlaydi. Bir martalik ABR
+                # kodlash va uzun videoda pastroq FPS vaqt tugashining oldini oladi.
+                target_fps = 15 if duration > 60 else (20 if duration > 30 else 24)
                 filters = watermark_filter(job["watermark"])
-                log = str(temp / "passlog")
+                filters[1] = re.sub(r"fps=30", f"fps={target_fps}", filters[1])
+
                 common = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", str(start), "-t", str(duration), "-i", str(source)]
-                p1 = common + filters + ["-c:v", "libx264", "-preset", "veryfast", "-b:v", f"{video_k}k", "-pass", "1", "-passlogfile", log, "-an", "-f", "null", "/dev/null"]
-                subprocess.run(p1, check=True, timeout=280)
-                audio = ["-an"] if job["mute"] else ["-map", "0:a:0?", "-c:a", "aac", "-b:a", "48k"]
-                p2 = common + filters + audio + ["-c:v", "libx264", "-preset", "veryfast", "-b:v", f"{video_k}k", "-pass", "2", "-passlogfile", log, "-metadata:s:v:0", "rotate=0", "-aspect", "3:4", "-movflags", "+faststart", str(output)]
-                subprocess.run(p2, check=True, timeout=280)
+                audio = ["-an"] if job["mute"] else ["-map", "0:a:0?", "-c:a", "aac", "-b:a", "32k"]
+                encode = common + filters + audio + [
+                    "-c:v", "libx264", "-preset", "ultrafast",
+                    "-b:v", f"{video_k}k", "-maxrate", f"{video_k}k",
+                    "-bufsize", f"{max(video_k * 2, 160)}k",
+                    "-profile:v", "high", "-pix_fmt", "yuv420p",
+                    "-metadata:s:v:0", "rotate=0", "-aspect", "3:4",
+                    "-movflags", "+faststart", str(output),
+                ]
+                subprocess.run(encode, check=True, timeout=900)
 
                 dimensions = subprocess.check_output([
                     "ffprobe", "-v", "error", "-select_streams", "v:0",
